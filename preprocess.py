@@ -8,9 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle
 
 # ===== 載入資料 =====
-df1 = pd.read_excel("113索資.xlsx")[['索取資料題目', '承辦機關']]
-df2 = pd.read_excel("114索資.xlsx")[['索取資料題目', '承辦機關']]
-df = pd.concat([df1, df2]).dropna()
+df = pd.read_csv("112_114索資.csv")[['題目', '承辦機關']]
 df.columns = ['text', 'label']
 df['text'] = df['text'].astype(str).str.strip()
 df['label'] = df['label'].astype(str).str.strip()
@@ -154,19 +152,55 @@ valid_labels = {
     "地政局", "兵役局", "體育局", "資訊局", "法務局", "青年局", "主計處", "人事處", "政風處", 
     "公務人員訓練處", "研究發展考核委員會", "都市計畫委員會", "原住民族事務委員會", "客家事務委員會", "臺北自來水事業處", 
     "臺北大眾捷運股份有限公司", "工務局新建工程處", "工務局水利工程處", "工務局公園路燈工程管理處", 
-    "工務局衛生下水道工程處", "工務局大地工程處", "市場處", "商業處", "動物保護處", "都市更新處", "建築管理工程處",
+    "工務局衛生下水道工程處", "工務局大地工程處", "市場處", "商業處", "動物保護處", "都市更新處", "建築管理工程處", "多局處", "全發"
 }
 
-df['label'] = df['label'].replace(label_mapping)
+def preprocess_label(label):
+    return label.replace("臺北市政府", "").replace("臺北市立", "").replace("臺北市", "").strip()
+
+df['label'] = df['label'].apply(preprocess_label)
 
 def normalize_label(label):
     return label if label in valid_labels else "其他"
 
 df['label'] = df['label'].apply(normalize_label)
 
-# ===== 正則清理流水號格式 =====
-pattern = r'\b[A-Za-z]\d{5}-\d{8}\b'
-df['text'] = df['text'].apply(lambda x: re.sub(pattern, '', str(x)))
+
+# 判斷是否為中文
+def is_chinese(char):
+    return '\u4e00' <= char <= '\u9fff'
+
+# 計算中文數量
+def chinese_char_count(text):
+    return sum(1 for c in text if is_chinese(c))
+
+# 編號樣式的正則表達式
+patterns = [
+    re.compile(r'[A-Z]\d{5}-\d{8}'),  # A12345-67890123
+    re.compile(r'[A-Z]\d{6}'),        # P021345
+    re.compile(r'\d{11}')             # 12345678901
+]
+
+# 判斷是否要排除
+def should_exclude(text):
+    zh_count = chinese_char_count(text)
+    return zh_count < 30 and any(p.search(text) for p in patterns)
+
+
+# 篩選：保留的資料
+df_filtered = df[~df['text'].apply(should_exclude)].reset_index(drop=True)
+
+# 移除的資料（符合排除條件的）
+df_removed = df[df['text'].apply(should_exclude)].reset_index(drop=True)
+
+# 儲存到 CSV（你可以改檔名）
+df_removed.to_csv("removed_data.csv", index=False)
+
+# 印出結果
+
+print("\n被排除的資料：")
+print(df_removed)
+
 
 # ===== 單標籤模式 =====
 grouped = df.groupby('text')['label'].first().reset_index()
@@ -182,17 +216,18 @@ X_temp, X_test, y_temp, y_test = train_test_split(grouped['text'], y, test_size=
 X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.125, random_state=42)
 
 # ===== jieba 分詞 =====
-X_train = X_train.apply(lambda x: " ".join(jieba.cut_for_search(x)))
-X_val = X_val.apply(lambda x: " ".join(jieba.cut_for_search(x)))
-X_test = X_test.apply(lambda x: " ".join(jieba.cut_for_search(x)))
+X_train = X_train.fillna("").apply(lambda x: " ".join(jieba.cut_for_search(str(x))))
+X_val = X_val.fillna("").apply(lambda x: " ".join(jieba.cut_for_search(str(x))))
+X_test = X_test.fillna("").apply(lambda x: " ".join(jieba.cut_for_search(str(x))))
+
 
 # ===== 儲存資料 =====
-X_train.to_csv("train_texts_single_jieba.csv", index=False, encoding='utf-8-sig')
-X_val.to_csv("val_texts_single_jieba.csv", index=False, encoding='utf-8-sig')
-X_test.to_csv("test_texts_single_jieba.csv", index=False, encoding='utf-8-sig')
-pd.Series(y_train).to_csv("train_labels_single_jieba.csv", index=False)
-pd.Series(y_val).to_csv("val_labels_single_jieba.csv", index=False)
-pd.Series(y_test).to_csv("test_labels_single_jieba.csv", index=False)
+X_train.to_csv("train_texts_single_jieba_112114.csv", index=False, encoding='utf-8-sig')
+X_val.to_csv("val_texts_single_jieba_112114.csv", index=False, encoding='utf-8-sig')
+X_test.to_csv("test_texts_single_jieba_112114.csv", index=False, encoding='utf-8-sig')
+pd.Series(y_train).to_csv("train_labels_single_jieba_112114.csv", index=False)
+pd.Series(y_val).to_csv("val_labels_single_jieba_112114.csv", index=False)
+pd.Series(y_test).to_csv("test_labels_single_jieba_112114.csv", index=False)
 
 import joblib
 joblib.dump(label_encoder, "label_encoder.pkl")
